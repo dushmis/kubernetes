@@ -29,9 +29,9 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/admission"
-	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/api/ref"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/settings"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion"
@@ -59,6 +59,7 @@ type podPresetPlugin struct {
 	lister settingslisters.PodPresetLister
 }
 
+var _ admission.MutationInterface = &podPresetPlugin{}
 var _ = kubeapiserveradmission.WantsInternalKubeInformerFactory(&podPresetPlugin{})
 var _ = kubeapiserveradmission.WantsInternalKubeClientSet(&podPresetPlugin{})
 
@@ -69,7 +70,7 @@ func NewPlugin() *podPresetPlugin {
 	}
 }
 
-func (plugin *podPresetPlugin) Validate() error {
+func (plugin *podPresetPlugin) ValidateInitialization() error {
 	if plugin.client == nil {
 		return fmt.Errorf("%s requires a client", pluginName)
 	}

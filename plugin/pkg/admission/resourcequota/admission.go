@@ -22,12 +22,13 @@ import (
 	"time"
 
 	"k8s.io/apiserver/pkg/admission"
-	"k8s.io/kubernetes/pkg/api"
+	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion"
 	kubeapiserveradmission "k8s.io/kubernetes/pkg/kubeapiserver/admission"
 	"k8s.io/kubernetes/pkg/quota"
 	resourcequotaapi "k8s.io/kubernetes/plugin/pkg/admission/resourcequota/apis/resourcequota"
+	resourcequotaapiv1alpha1 "k8s.io/kubernetes/plugin/pkg/admission/resourcequota/apis/resourcequota/v1alpha1"
 	"k8s.io/kubernetes/plugin/pkg/admission/resourcequota/apis/resourcequota/validation"
 )
 
@@ -48,10 +49,14 @@ func Register(plugins *admission.Plugins) {
 			}
 			return NewResourceQuota(configuration, 5, make(chan struct{}))
 		})
+
+	// add our config types
+	resourcequotaapi.AddToScheme(plugins.ConfigScheme)
+	resourcequotaapiv1alpha1.AddToScheme(plugins.ConfigScheme)
 }
 
-// quotaAdmission implements an admission controller that can enforce quota constraints
-type quotaAdmission struct {
+// QuotaAdmission implements an admission controller that can enforce quota constraints
+type QuotaAdmission struct {
 	*admission.Handler
 	config             *resourcequotaapi.Configuration
 	stopCh             <-chan struct{}
@@ -61,8 +66,9 @@ type quotaAdmission struct {
 	evaluator          Evaluator
 }
 
-var _ = kubeapiserveradmission.WantsInternalKubeClientSet(&quotaAdmission{})
-var _ = kubeapiserveradmission.WantsQuotaConfiguration(&quotaAdmission{})
+var _ admission.ValidationInterface = &QuotaAdmission{}
+var _ = kubeapiserveradmission.WantsInternalKubeClientSet(&QuotaAdmission{})
+var _ = kubeapiserveradmission.WantsQuotaConfiguration(&QuotaAdmission{})
 
 type liveLookupEntry struct {
 	expiry time.Time
@@ -72,13 +78,13 @@ type liveLookupEntry struct {
 // NewResourceQuota configures an admission controller that can enforce quota constraints
 // using the provided registry.  The registry must have the capability to handle group/kinds that
 // are persisted by the server this admission controller is intercepting
-func NewResourceQuota(config *resourcequotaapi.Configuration, numEvaluators int, stopCh <-chan struct{}) (admission.Interface, error) {
+func NewResourceQuota(config *resourcequotaapi.Configuration, numEvaluators int, stopCh <-chan struct{}) (*QuotaAdmission, error) {
 	quotaAccessor, err := newQuotaAccessor()
 	if err != nil {
 		return nil, err
 	}
 
-	return &quotaAdmission{
+	return &QuotaAdmission{
 		Handler:       admission.NewHandler(admission.Create, admission.Update),
 		stopCh:        stopCh,
 		numEvaluators: numEvaluators,
@@ -87,21 +93,21 @@ func NewResourceQuota(config *resourcequotaapi.Configuration, numEvaluators int,
 	}, nil
 }
 
-func (a *quotaAdmission) SetInternalKubeClientSet(client internalclientset.Interface) {
+func (a *QuotaAdmission) SetInternalKubeClientSet(client internalclientset.Interface) {
 	a.quotaAccessor.client = client
 }
 
-func (a *quotaAdmission) SetInternalKubeInformerFactory(f informers.SharedInformerFactory) {
+func (a *QuotaAdmission) SetInternalKubeInformerFactory(f informers.SharedInformerFactory) {
 	a.quotaAccessor.lister = f.Core().InternalVersion().ResourceQuotas().Lister()
 }
 
-func (a *quotaAdmission) SetQuotaConfiguration(c quota.Configuration) {
+func (a *QuotaAdmission) SetQuotaConfiguration(c quota.Configuration) {
 	a.quotaConfiguration = c
 	a.evaluator = NewQuotaEvaluator(a.quotaAccessor, a.quotaConfiguration, nil, a.config, a.numEvaluators, a.stopCh)
 }
 
-// Validate ensures an authorizer is set.
-func (a *quotaAdmission) Validate() error {
+// ValidateInitialization ensures an authorizer is set.
+func (a *QuotaAdmission) ValidateInitialization() error {
 	if a.quotaAccessor == nil {
 		return fmt.Errorf("missing quotaAccessor")
 	}
@@ -120,8 +126,8 @@ func (a *quotaAdmission) Validate() error {
 	return nil
 }
 
-// Admit makes admission decisions while enforcing quota
-func (a *quotaAdmission) Admit(attr admission.Attributes) (err error) {
+// Validate makes admission decisions while enforcing quota
+func (a *QuotaAdmission) Validate(attr admission.Attributes) (err error) {
 	// ignore all operations that correspond to sub-resource actions
 	if attr.GetSubresource() != "" {
 		return nil
